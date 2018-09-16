@@ -14,9 +14,9 @@ view into the AbstractDataFrame grouped by rows.
 
 Not meant to be constructed directly, see `groupby`.
 """
-mutable struct GroupedDataFrame
-    parent::AbstractDataFrame
-    cols::Vector         # columns used for sorting
+mutable struct GroupedDataFrame{T<:AbstractDataFrame}
+    parent::T
+    cols::Vector{Int}    # columns used for sorting
     idx::Vector{Int}     # indexing vector when sorted by the given columns
     starts::Vector{Int}  # starts of groups
     ends::Vector{Int}    # ends of groups
@@ -87,7 +87,7 @@ function groupby(df::AbstractDataFrame, cols::Vector;
         permute!(df_groups.starts, group_perm)
         Base.permute!!(df_groups.stops, group_perm)
     end
-    GroupedDataFrame(df, cols, df_groups.rperm,
+    GroupedDataFrame(df, DataFrames.index(df)[cols], df_groups.rperm,
                      df_groups.starts, df_groups.stops)
 end
 groupby(d::AbstractDataFrame, cols;
@@ -138,14 +138,14 @@ Not meant to be constructed directly, see `groupby` abnd
 provided for a GroupApplied object.
 
 """
-struct GroupApplied{T<:AbstractDataFrame}
-    gd::GroupedDataFrame
+struct GroupApplied{S<:GroupedDataFrame, T<:Union{AbstractDataFrame, NamedTuple}}
+    gd::S
     vals::Vector{T}
 
     function (::Type{GroupApplied})(gd::GroupedDataFrame, vals::Vector)
         length(gd) == length(vals) ||
             throw(DimensionMismatch("GroupApplied requires keys and vals be of equal length (got $(length(gd)) and $(length(vals)))."))
-        new{eltype(vals)}(gd, vals)
+        new{typeof(gd), eltype(vals)}(gd, vals)
     end
 end
 
@@ -163,8 +163,20 @@ function Base.map(f::Function, ga::GroupApplied)
 end
 
 wrap(df::AbstractDataFrame) = df
+wrap(nt::NamedTuple) = nt
 wrap(A::Matrix) = convert(DataFrame, A)
-wrap(s::Any) = DataFrame(x1 = s)
+wrap(s::Union{AbstractVector, Tuple}) = DataFrame(x1 = s)
+wrap(s::Any) = (x1 = s,)
+
+function _vcat(vals::AbstractVector{<:NamedTuple})
+    df = DataFrame()
+    isempty(vals) && return df
+
+    for col in fieldnames(typeof(first(vals)))
+        df[col] = [x[col] for x in vals]
+    end
+    df
+end
 
 """
 Combine a GroupApplied object (rudimentary)
@@ -188,17 +200,17 @@ df = DataFrame(a = repeat([1, 2, 3, 4], outer=[2]),
                b = repeat([2, 1], outer=[4]),
                c = randn(8))
 gd = groupby(df, :a)
-combine(map(d -> mean(skipmissing(d[:c])), gd))
+combine(map(d -> sum(skipmissing(d[:c])), gd))
 ```
 
 """
 function combine(ga::GroupApplied)
     gd, vals = ga.gd, ga.vals
     valscat = _vcat(vals)
-    idx = Vector{Int}(undef, size(valscat, 1))
+    idx = similar(vals, Int)
     j = 0
     @inbounds for (start, val) in zip(gd.starts, vals)
-        n = size(val, 1)
+        n = val isa NamedTuple ? 1 : size(val, 1)
         idx[j .+ (1:n)] .= gd.idx[start]
         j += n
     end
