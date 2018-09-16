@@ -72,8 +72,7 @@ vcat([g[:b] for g in gd]...)
 for g in gd
     println(g)
 end
-map(d -> mean(skipmissing(d[:c])), gd)   # returns a GroupApplied object
-combine(map(d -> mean(skipmissing(d[:c])), gd))
+combine(d -> mean(skipmissing(d[:c])), gd)
 ```
 
 """
@@ -115,53 +114,6 @@ Base.getindex(gd::GroupedDataFrame, I::AbstractArray{Bool}) =
 Base.names(gd::GroupedDataFrame) = names(gd.parent)
 _names(gd::GroupedDataFrame) = _names(gd.parent)
 
-##############################################################################
-##
-## GroupApplied...
-##    the result of a split-apply operation
-##    TODOs:
-##      - better name?
-##      - ref
-##      - keys, vals
-##      - length
-##      - start, next, done -- should this return (k,v) or just v?
-##      - make it a real associative type? Is there a need to look up key columns?
-##
-##############################################################################
-
-"""
-The result of a `map` operation on a GroupedDataFrame; mainly for use
-with `combine`
-
-Not meant to be constructed directly, see `groupby` abnd
-`combine`. Minimal support is provided for this type. `map` is
-provided for a GroupApplied object.
-
-"""
-struct GroupApplied{S<:GroupedDataFrame, T<:Union{AbstractDataFrame, NamedTuple}}
-    gd::S
-    vals::Vector{T}
-
-    function (::Type{GroupApplied})(gd::GroupedDataFrame, vals::Vector)
-        length(gd) == length(vals) ||
-            throw(DimensionMismatch("GroupApplied requires keys and vals be of equal length (got $(length(gd)) and $(length(vals)))."))
-        new{typeof(gd), eltype(vals)}(gd, vals)
-    end
-end
-
-
-#
-# Apply / map
-#
-
-# map() sweeps along groups
-function Base.map(f::Function, gd::GroupedDataFrame)
-    GroupApplied(gd, [wrap(f(df)) for df in gd])
-end
-function Base.map(f::Function, ga::GroupApplied)
-    GroupApplied(ga.gd, [wrap(f(df)) for df in ga.vals])
-end
-
 wrap(df::AbstractDataFrame) = df
 wrap(nt::NamedTuple) = nt
 wrap(A::Matrix) = convert(DataFrame, A)
@@ -200,12 +152,68 @@ df = DataFrame(a = repeat([1, 2, 3, 4], outer=[2]),
                b = repeat([2, 1], outer=[4]),
                c = randn(8))
 gd = groupby(df, :a)
-combine(map(d -> sum(skipmissing(d[:c])), gd))
+combine(d -> sum(skipmissing(d[:c])), gd)
 ```
 
 """
-function combine(ga::GroupApplied)
-    gd, vals = ga.gd, ga.vals
+function combine(f::Function, gd::GroupedDataFrame)
+    if length(gd) > 0
+        _combine(wrap(f(gd[1])), f, gd)
+    else
+        # TODO: handle this
+    end
+end
+
+function _combine(first::NamedTuple, f::Function, gd::GroupedDataFrame)
+    m = length(first)
+    n = length(gd)
+    idx = Vector{Int}(undef, n)
+    cols = ntuple(i -> Vector{typeof(first[i])}(undef, n), m)
+    cols = _combine!(cols, 1, first, f, gd, idx)
+    valscat = DataFrame(collect(cols), collect(fieldnames(typeof(first))))
+    hcat!(gd.parent[idx, gd.cols], valscat)
+end
+
+function _combine!(oldcols, start::Integer, first::NamedTuple, f::Function, gd::GroupedDataFrame, idx::Vector{Int})
+    m = length(first)
+    n = length(gd)
+    cols = ntuple(m) do i
+        T = eltype(oldcols[i])
+        if first[i] isa T
+            return oldcols[i]
+        else
+            return copyto!(Vector{promote_type(T, typeof(first[i]))}(undef, n), 1,
+                           oldcols[i], 1, start-1)
+        end
+    end
+    # Handle first element
+    idx[start] = gd.idx[gd.starts[start]]
+    for j in 1:m
+        col = cols[j]
+        if first[j] isa eltype(col)
+            col[start] = first[j]
+        else
+            return _combine!(cols, start, first, f, gd, idx)
+        end
+    end
+    # Handle remaining elements
+    @inbounds for i in start+1:n
+        val = wrap(f(gd[i]))::typeof(first)
+        idx[i] = gd.idx[gd.starts[i]]
+        for j in 1:m
+            col = cols[j]
+            if val[j] isa eltype(col)
+                col[i] = val[j]
+            else
+                return _combine!(cols, i, val, f, gd, idx)
+            end
+        end
+    end
+    cols
+end
+
+function _combine(first::DataFrame, f::Function, gd::GroupedDataFrame)
+    vals = [wrap(f(df)) for df in gd]
     valscat = _vcat(vals)
     idx = similar(vals, Int)
     j = 0
@@ -306,7 +314,7 @@ end
 
 """
 by(d::AbstractDataFrame, cols, f::Function; sort::Bool = false) =
-    combine(map(f, groupby(d, cols, sort = sort)))
+    combine(f, groupby(d, cols, sort = sort))
 by(f::Function, d::AbstractDataFrame, cols; sort::Bool = false) =
     by(d, cols, f, sort = sort)
 
@@ -361,7 +369,7 @@ end
 aggregate(gd::GroupedDataFrame, f::Function; sort::Bool=false) = aggregate(gd, [f], sort=sort)
 function aggregate(gd::GroupedDataFrame, fs::Vector{T}; sort::Bool=false) where T<:Function
     headers = _makeheaders(fs, setdiff(_names(gd), _names(gd.parent[gd.cols])))
-    res = combine(map(x -> _aggregate(without(x, gd.cols), fs, headers), gd))
+    res = combine(x -> _aggregate(without(x, gd.cols), fs, headers), gd)
     sort && sort!(res, headers)
     res
 end
