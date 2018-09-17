@@ -156,39 +156,43 @@ combine(d -> sum(skipmissing(d[:c])), gd)
 ```
 
 """
-function combine(f::Function, gd::GroupedDataFrame)
+function Base.map(f::Function, gd::GroupedDataFrame)
     if length(gd) > 0
-        _combine(wrap(f(gd[1])), f, gd)
+        idx, valscat = _combine(wrap(f(gd[1])), f, gd)
+        return hcat!(gd.parent[idx, gd.cols], valscat)
     else
-        # TODO: handle this
+        return similar(gd.parent, 0)[gd.cols]
     end
 end
+
+@deprecate combine(f::Function, gd::GroupedDataFrame) map(f, gd)
+@deprecate combine(gd::GroupedDataFrame) map(identity, gd)
 
 function _combine(first::NamedTuple, f::Function, gd::GroupedDataFrame)
     m = length(first)
     n = length(gd)
     idx = Vector{Int}(undef, n)
-    cols = ntuple(i -> Vector{typeof(first[i])}(undef, n), m)
-    cols = _combine!(cols, 1, first, f, gd, idx)
-    valscat = DataFrame(collect(cols), collect(fieldnames(typeof(first))))
-    hcat!(gd.parent[idx, gd.cols], valscat)
+    initialcols = ntuple(i -> Vector{typeof(first[i])}(undef, n), m)
+    cols = _combine!(initialcols, 1, first, f, gd, idx)
+    valscat = DataFrame(collect(cols), collect(propertynames(first)))
+    idx, valscat
 end
 
 function _combine!(oldcols, start::Integer, first::NamedTuple, f::Function, gd::GroupedDataFrame, idx::Vector{Int})
-    m = length(first)
-    n = length(gd)
-    cols = ntuple(m) do i
+    n = length(first)
+    len = length(gd)
+    cols = ntuple(n) do i
         T = eltype(oldcols[i])
         if first[i] isa T
             return oldcols[i]
         else
-            return copyto!(Vector{promote_type(T, typeof(first[i]))}(undef, n), 1,
+            return copyto!(Vector{promote_type(T, typeof(first[i]))}(undef, len), 1,
                            oldcols[i], 1, start-1)
         end
     end
-    # Handle first element
+    # Handle first group
     idx[start] = gd.idx[gd.starts[start]]
-    for j in 1:m
+    for j in 1:n
         col = cols[j]
         if first[j] isa eltype(col)
             col[start] = first[j]
@@ -196,11 +200,11 @@ function _combine!(oldcols, start::Integer, first::NamedTuple, f::Function, gd::
             return _combine!(cols, start, first, f, gd, idx)
         end
     end
-    # Handle remaining elements
-    @inbounds for i in start+1:n
-        val = wrap(f(gd[i]))::typeof(first)
+    # Handle remaining groups
+    @inbounds for i in start+1:len
+        val = wrap(f(gd[i]))
         idx[i] = gd.idx[gd.starts[i]]
-        for j in 1:m
+        for j in 1:n
             col = cols[j]
             if val[j] isa eltype(col)
                 col[i] = val[j]
@@ -212,17 +216,23 @@ function _combine!(oldcols, start::Integer, first::NamedTuple, f::Function, gd::
     cols
 end
 
-function _combine(first::DataFrame, f::Function, gd::GroupedDataFrame)
-    vals = [wrap(f(df)) for df in gd]
-    valscat = _vcat(vals)
-    idx = similar(vals, Int)
-    j = 0
-    @inbounds for (start, val) in zip(gd.starts, vals)
-        n = val isa NamedTuple ? 1 : size(val, 1)
-        idx[j .+ (1:n)] .= gd.idx[start]
+function _combine(first::AbstractDataFrame, f::Function, gd::GroupedDataFrame)
+    len = length(gd)
+    idx = Vector{Int}(undef, len)
+    # Handle first group
+    n = size(first, 1)
+    idx[1:n] .= gd.idx[1]
+    valscat = deepcopy(first)
+    # Handle remaining groups
+    j = size(first, 1)
+    @inbounds for i in 2:len
+        val = wrap(f(gd[i]))
+        n = size(val, 1)
+        idx[j .+ (1:n)] .= gd.idx[gd.starts[i]]
+        append!(valscat, val)
         j += n
     end
-    hcat!(gd.parent[idx, gd.cols], valscat)
+    idx, valscat
 end
 
 
@@ -314,7 +324,7 @@ end
 
 """
 by(d::AbstractDataFrame, cols, f::Function; sort::Bool = false) =
-    combine(f, groupby(d, cols, sort = sort))
+    map(f, groupby(d, cols, sort = sort))
 by(f::Function, d::AbstractDataFrame, cols; sort::Bool = false) =
     by(d, cols, f, sort = sort)
 

@@ -92,6 +92,12 @@ function SubDataFrame(sdf::SubDataFrame, rowinds::Colon)
     return sdf
 end
 
+Base.copy(sdf::SubDataFrame) = sdf[:]
+Base.deepcopy(sdf::SubDataFrame) = sdf[:]
+
+DataFrame(sdf::SubDataFrame) = sdf[:]
+Base.convert(::Type{DataFrame}, sdf::SubDataFrame) = sdf[:]
+
 """
     parent(sdf::SubDataFrame)
 
@@ -154,8 +160,6 @@ end
 ## Miscellaneous
 ##
 ##############################################################################
-
-Base.map(f::Function, sdf::SubDataFrame) = f(sdf) # TODO: deprecate
 
 without(sdf::SubDataFrame, c) = view(without(parent(sdf), c), rows(sdf))
 # Resolve a method ambiguity

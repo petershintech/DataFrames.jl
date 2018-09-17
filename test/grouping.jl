@@ -103,19 +103,16 @@ module TestGrouping
 
     # groupby() without groups sorting
     gd = groupby(df, cols)
-    ga = map(f, gd)
-
-    @test bdf == combine(ga)
+    @test bdf == map(f, gd)
 
     # groupby() with groups sorting
     gd = groupby(df, cols, sort=true)
-    ga = map(f, gd)
-    @test sbdf == combine(ga)
+    @test sbdf == map(f, gd)
 
     g(df) = DataFrame(cmax1 = [c + 1 for c in df[:cmax]])
     h(df) = g(f(df))
 
-    @test combine(map(h, gd)) == combine(map(g, ga))
+    #@test combine(map(h, gd)) == combine(map(g, ga))
 
     # testing pool overflow
     df2 = DataFrame(v1 = categorical(collect(1:1000)), v2 = categorical(fill(1, 1000)))
@@ -241,3 +238,5 @@ module TestGrouping
         end
     end
 end
+
+# TODO: test map(identity, gd)

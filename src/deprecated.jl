@@ -1325,3 +1325,5 @@ import Base: show
 @deprecate showall(io::IO, df::GroupedDataFrame) show(io, df, allgroups=true)
 @deprecate showall(df::GroupedDataFrame) show(df, allgroups=true)
 
+import Base: map
+@deprecate map(f::Function, sdf::SubDataFrame) f(sdf)
