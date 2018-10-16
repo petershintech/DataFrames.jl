@@ -80,9 +80,9 @@ combine(map(d -> mean(skipmissing(d[:c])), gd))
 function groupby(df::AbstractDataFrame, cols::Vector;
                  sort::Bool = false, skipmissing::Bool = false)
     sdf = df[cols]
-    df_groups = group_rows(sdf, skipmissing)
-    # sort the groups
-    if sort
+    df_groups = group_rows(sdf, false, skipmissing, sort)
+    # sort the groups (CategoricalVector does this directly during grouping)
+    if sort && !(length(cols) == 1 && df[cols] isa CategoricalVector)
         group_perm = sortperm(view(sdf, df_groups.rperm[df_groups.starts]))
         permute!(df_groups.starts, group_perm)
         Base.permute!!(df_groups.stops, group_perm)

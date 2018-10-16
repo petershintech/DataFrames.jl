@@ -6,9 +6,9 @@ struct RowGroupDict{T<:AbstractDataFrame}
     df::T
     "number of groups"
     ngroups::Int
-    "row hashes"
+    "row hashes (optional, can be empty)"
     rhashes::Vector{UInt}
-    "hashindex -> index of group-representative row"
+    "hashindex -> index of group-representative row (optional, can be empty)"
     gslots::Vector{Int}
     "group index for each row"
     groups::Vector{Int}
@@ -69,11 +69,11 @@ function hashrows_col!(h::Vector{UInt},
 end
 
 # Calculate the vector of `df` rows hash values.
-function hashrows(df::AbstractDataFrame, skipmissing::Bool)
-    rhashes = zeros(UInt, nrow(df))
-    missings = fill(false, skipmissing ? nrow(df) : 0)
-    cols = columns(df)
-    for i in 1:ncol(df)
+function hashrows(cols::Tuple{Vararg{AbstractVector}}, skipmissing::Bool)
+    n = length(cols[1])
+    rhashes = zeros(UInt, n)
+    missings = fill(false, skipmissing ? n : 0)
+    for i in 1:length(cols)
         hashrows_col!(rhashes, missings, cols[i], i == 1)
     end
     return (rhashes, missings)
@@ -82,24 +82,26 @@ end
 # Helper function for RowGroupDict.
 # Returns a tuple:
 # 1) the number of row groups in a data table
-# 2) vector of row hashes
+# 2) vector of row hashes (may be empty if hash=false)
 # 3) slot array for a hash map, non-zero values are
 #    the indices of the first row in a group
 # Optional group vector is set to the group indices of each row
 function row_group_slots(df::AbstractDataFrame,
                          groups::Union{Vector{Int}, Nothing} = nothing,
-                         skipmissing::Bool = false)
-    rhashes, missings = hashrows(df, skipmissing)
-    row_group_slots(ntuple(i -> df[i], ncol(df)), rhashes, missings, groups, skipmissing)
+                         hash::Bool = true,
+                         skipmissing::Bool = false,
+                         sort::Bool = false)
+    row_group_slots(ntuple(i -> df[i], ncol(df)), groups, hash, skipmissing)
 end
 
 function row_group_slots(cols::Tuple{Vararg{AbstractVector}},
-                         rhashes::AbstractVector{UInt},
-                         missings::AbstractVector{Bool},
                          groups::Union{Vector{Int}, Nothing} = nothing,
-                         skipmissing::Bool = false)
+                         hash::Bool = true,
+                         skipmissing::Bool = false,
+                         sort::Bool = false)
     @assert groups === nothing || length(groups) == length(cols[1])
-    # inspired by Dict code from base cf. https://github.com/JuliaData/DataFrames.jl/pull/17#discussion_r102481481
+    rhashes, missings = hashrows(cols, skipmissing)
+    # inspired by Dict code from base cf. https://github.com/JuliaData/DataTables.jl/pull/17#discussion_r102481481
     sz = Base._tablesz(length(rhashes))
     @assert sz >= length(rhashes)
     szm1 = sz-1
@@ -112,7 +114,7 @@ function row_group_slots(cols::Tuple{Vararg{AbstractVector}},
         # Use 0 for non-missing values to catch bugs if group is not found
         gix = skipmissing && missings[i] ? 1 : 0
         probe = 0
-        # Skip rows contaning at least one missing (assigning them to group 0)
+        # Skip rows containing at least one missing (assigning them to group 0)
         if !skipmissing || !missings[i]
             while true
                 g_row = gslots[slotix]
@@ -138,11 +140,55 @@ function row_group_slots(cols::Tuple{Vararg{AbstractVector}},
     return ngroups, rhashes, gslots
 end
 
+function row_group_slots(cols::Tuple{CategoricalVector},
+                         groups::Union{Vector{Int}, Nothing} = nothing,
+                         hash::Bool = true,
+                         skipmissing::Bool = false,
+                         sort::Bool = false)
+    if hash
+        return invoke(row_group_slots,
+                      Tuple{Tuple{Vararg{AbstractVector}},
+                            Union{Vector{Int}, Nothing}, Bool, Bool, Bool},
+                      cols, groups, hash, skipmissing, sort)
+    end
+
+    col = cols[1]
+    @assert groups === nothing || length(groups) == length(col)
+
+    ngroups = length(levels(col)) + !skipmissing
+    rhashes = UInt[]
+    gslots = Int[]
+
+    # FIXME: remove empty groups
+    if groups !== nothing
+        # Pre-sorting is very cheap here
+        if sort
+            refmap = [0; CategoricalArrays.order(col.pool)]
+            skipmissing || (refmap .+= 1)
+            @inbounds for i in eachindex(groups)
+                groups[i] = refmap[col.refs[i]+1]
+            end
+        else
+            if skipmissing
+                copyto!(groups, col.refs)
+            else
+                groups .= col.refs .+ 1
+            end
+        end
+    end
+    return ngroups, rhashes, gslots
+end
+
 # Builds RowGroupDict for a given DataFrame.
 # Partly uses the code of Wes McKinney's groupsort_indexer in pandas (file: src/groupby.pyx).
-function group_rows(df::AbstractDataFrame, skipmissing::Bool = false)
+# - hash: whether row hashes should be computed (if false, the rhashes and gslots fields
+#   hold empty vectors)
+# - skipmissing: whether rows with missing values should be skipped rather than put into group 0
+# - sort: whether groups should be sorted if the operation is cheap (as for CategoricalVector)
+function group_rows(df::AbstractDataFrame, hash::Bool = true, skipmissing::Bool = false,
+                    sort::Bool = false)
     groups = Vector{Int}(undef, nrow(df))
-    ngroups, rhashes, gslots = row_group_slots(df, groups, skipmissing)
+    ngroups, rhashes, gslots = row_group_slots(df, groups, hash, skipmissing, sort)::Tuple{Int, Vector{UInt}, Vector{Int}}
 
     # count elements in each group
     stops = zeros(Int, ngroups)
