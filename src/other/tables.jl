@@ -13,22 +13,8 @@ getvector(x) = collect(x)
 fromcolumns(x) = DataFrame(Any[getvector(c) for c in Tables.eachcolumn(x)], Index(collect(Symbol, propertynames(x))))
 
 function DataFrame(x)
-    if Tables.istable(typeof(x))
+    if Tables.istable(x)
         return fromcolumns(Tables.columns(x))
-    end
-    if TableTraits.supports_get_columns_copy_using_missing(x)
-        y = TableTraits.get_columns_copy_using_missing(x)
-        return DataFrame(collect(y), collect(keys(y)))
-    end
-    it = TableTraits.isiterabletable(x)
-    if it === true
-        # Base.depwarn("constructing a DataFrame from an iterator is deprecated; $T should support the Tables.jl interface", nothing)
-        y = IteratorInterfaceExtensions.getiterator(x)
-        return fromcolumns(Tables.columns(Tables.DataValueUnwrapper(y)))
-    elseif it === missing
-        y = IteratorInterfaceExtensions.getiterator(x)
-        # non-NamedTuple or EltypeUnknown
-        return fromcolumns(Tables.buildcolumns(nothing, Tables.DataValueUnwrapper(y)))
     end
     if x isa AbstractVector && all(col -> isa(col, AbstractVector), x)
         return DataFrame(Vector{AbstractVector}(x))
