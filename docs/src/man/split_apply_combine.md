@@ -119,7 +119,7 @@ julia> aggregate(iris, :Species, length)
 │ 3   │ virginica     │ 50                 │ 50                │ 50                 │ 50                │
 
 julia> aggregate(iris, :Species, [sum, mean])
-3×9 DataFrame. Omitted printing of 2 columns
+3×9 DataFrame. Omitted printing of 4 columns
 │ Row │ Species       │ SepalLength_sum │ SepalWidth_sum │ PetalLength_sum │ PetalWidth_sum │ SepalLength_mean │ SepalWidth_mean │
 │     │ Categorical…⍰ │ Float64         │ Float64        │ Float64         │ Float64        │ Float64          │ Float64         │
 ├─────┼───────────────┼─────────────────┼────────────────┼─────────────────┼────────────────┼──────────────────┼─────────────────┤
