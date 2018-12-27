@@ -130,7 +130,7 @@ julia> categorical!(df, :A) # change the column `:A` to be categorical
 
 julia> eltypes(df)
 2-element Array{Type,1}:
- CategoricalArrays.CategoricalString{UInt32}
+ CategoricalString{UInt32}
  String
 
 julia> categorical!(df) # change all columns to be categorical
@@ -147,8 +147,8 @@ julia> categorical!(df) # change all columns to be categorical
 
 julia> eltypes(df)
 2-element Array{Type,1}:
- CategoricalArrays.CategoricalString{UInt32}
- CategoricalArrays.CategoricalString{UInt32}
+ CategoricalString{UInt32}
+ CategoricalString{UInt32}
 
 ```
 
